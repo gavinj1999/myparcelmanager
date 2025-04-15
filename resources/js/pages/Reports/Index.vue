@@ -5,6 +5,10 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import PlaceholderPattern from '@/components/PlaceholderPattern.vue';
 import moment from 'moment';
 import Chart from 'chart.js/auto';
+import ChartDataLabels from 'chartjs-plugin-datalabels';
+
+// Register ChartDataLabels plugin with Chart.js
+Chart.register(ChartDataLabels);
 
 const props = defineProps({
   activities: { type: Object, default: () => ({ data: [] }) },
@@ -126,7 +130,7 @@ const parcelBarData = computed(() => {
   };
 });
 
-// Data for the pay bar chart (total earnings only)
+// Data for the pay bar chart (side by side by round, all dates in period, exclude Sundays unless activity)
 const payBarChartData = computed(() => {
   if (!currentDatePeriod.value) return { labels: [], datasets: [] };
 
@@ -140,46 +144,80 @@ const payBarChartData = computed(() => {
     );
   });
 
-  const earningsByDay: { [key: string]: number } = {};
+  // Collect all dates with activity
+  const datesWithActivity = new Set<string>();
   activitiesInPeriod.forEach(activity => {
     const dateStr = moment(activity.activity_date).format('DD/MM/YYYY');
-    const earnings = activity.quantity * (activity.parcel_type?.rate || 0);
-    earningsByDay[dateStr] = (earningsByDay[dateStr] || 0) + earnings;
+    datesWithActivity.add(dateStr);
   });
 
-  const labels = Object.keys(earningsByDay).sort((a, b) =>
-    moment(a, 'DD/MM/YYYY').diff(moment(b, 'DD/MM/YYYY'))
-  );
-  const data = labels.map(label => earningsByDay[label]);
+  // Generate all dates in the period, excluding Sundays unless they have activity
+  const startDate = moment(currentDatePeriod.value.start_date);
+  const endDate = moment(currentDatePeriod.value.end_date);
+  const labels: string[] = [];
+  let currentDate = startDate.clone();
+
+  while (currentDate.isSameOrBefore(endDate, 'day')) {
+    const dateStr = currentDate.format('DD/MM/YYYY');
+    const isSunday = currentDate.day() === 0; // 0 = Sunday in moment.js
+
+    // Include the date if it's not a Sunday, or if it's a Sunday with activity
+    if (!isSunday || datesWithActivity.has(dateStr)) {
+      labels.push(dateStr);
+    }
+    currentDate.add(1, 'day');
+  }
+
+  // Collect earnings by round and date
+  const earningsByRoundAndDate: { [key: number]: { [key: string]: number } } = {};
+  activitiesInPeriod.forEach(activity => {
+    const roundId = activity.parcel_type?.round_id ?? 0;
+    const dateStr = moment(activity.activity_date).format('DD/MM/YYYY');
+    const earnings = activity.quantity * (activity.parcel_type?.rate || 0);
+
+    if (!earningsByRoundAndDate[roundId]) {
+      earningsByRoundAndDate[roundId] = {};
+    }
+    earningsByRoundAndDate[roundId][dateStr] = (earningsByRoundAndDate[roundId][dateStr] || 0) + earnings;
+  });
+
+  // Create datasets for each round (side by side)
+  const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'];
+  const datasets = Object.keys(earningsByRoundAndDate).map((roundId, index) => {
+    const round = props.rounds.find(r => r.id === Number(roundId));
+    const label = round ? round.name : `Unknown Round (ID: ${roundId})`;
+    const data = labels.map(date => earningsByRoundAndDate[roundId][date] || 0);
+
+    return {
+      label,
+      data,
+      backgroundColor: colors[index % colors.length],
+      borderColor: colors[index % colors.length],
+      borderWidth: 1,
+      responsive: true // Reduced bar thickness to allow more space
+    };
+  });
 
   return {
     labels,
-    datasets: [
-      {
-        label: 'Total Earnings (£)',
-        data,
-        backgroundColor: '#36A2EB',
-        borderColor: '#36A2EB',
-        borderWidth: 1,
-      },
-    ],
+    datasets,
   };
 });
 
 // Chart references
-const parcelBarChart = ref<Chart | null>(null); // Updated reference name
+const parcelBarChart = ref<Chart | null>(null);
 const payBarChart = ref<Chart | null>(null);
 
 // Initialize charts
 onMounted(() => {
-  // Parcel Bar Chart (converted from pie chart)
+  // Parcel Bar Chart
   const parcelBarCtx = document.getElementById('parcel-bar-chart') as HTMLCanvasElement;
   if (parcelBarCtx) {
     parcelBarChart.value = new Chart(parcelBarCtx, {
-      type: 'bar', // Changed to bar chart
+      type: 'bar',
       data: parcelBarData.value,
       options: {
-        indexAxis: 'y', // Horizontal bar chart
+        indexAxis: 'y',
         responsive: true,
         scales: {
           x: {
@@ -206,7 +244,7 @@ onMounted(() => {
         },
         plugins: {
           legend: {
-            display: false, // Legend already disabled
+            display: false,
           },
           title: {
             display: true,
@@ -218,7 +256,7 @@ onMounted(() => {
             callbacks: {
               label: function (context) {
                 const label = context.label || '';
-                const value = context.parsed.x || 0; // Use x for horizontal bar chart
+                const value = context.parsed.x || 0;
                 return `${label}: ${value}`;
               },
             },
@@ -228,26 +266,18 @@ onMounted(() => {
     });
   }
 
-  // Pay Bar Chart
+  // Pay Bar Chart (horizontal bars, switched x-y axes)
   const payBarCtx = document.getElementById('pay-bar-chart') as HTMLCanvasElement;
   if (payBarCtx) {
     payBarChart.value = new Chart(payBarCtx, {
       type: 'bar',
       data: payBarChartData.value,
       options: {
+        indexAxis: 'y', // Horizontal bars
         responsive: true,
+        maintainAspectRatio: false,
         scales: {
           x: {
-            title: {
-              display: true,
-              text: 'Date',
-              color: '#e5e7eb',
-            },
-            ticks: {
-              color: '#e5e7eb',
-            },
-          },
-          y: {
             title: {
               display: true,
               text: 'Total Earnings (£)',
@@ -258,15 +288,75 @@ onMounted(() => {
             },
             beginAtZero: true,
           },
+          y: {
+            title: {
+              display: true,
+              text: 'Date',
+              color: '#e5e7eb',
+            },
+            ticks: {
+              color: '#e5e7eb',
+              callback: function (value) {
+                return payBarChartData.value.labels[value] || '';
+              },
+            },
+            grid: {
+              display: false, // Optional: Remove grid lines for cleaner look
+            },
+          },
         },
         plugins: {
           legend: {
-            display: false,
+            position: 'bottom',
+            labels: {
+              color: '#e5e7eb',
+            },
           },
           title: {
             display: true,
-            text: 'Daily Earnings in Current Period',
+            text: 'Daily Earnings by Round in Current Period',
             color: '#e5e7eb',
+          },
+          tooltip: {
+            enabled: true,
+            callbacks: {
+              label: function (context) {
+                const label = context.dataset.label || '';
+                const value = context.parsed.x || 0;
+                return `${label}: £${value.toFixed(2)}`;
+              },
+            },
+          },
+          datalabels: {
+            display: true,
+            color: '#e5e7eb',
+            align: 'center',
+            anchor: 'center',
+            rotation: 0, // Remove rotation (set to 0 degrees)
+            formatter: (value, context) => {
+              return value > 0 ? `£${value.toFixed(2)}` : '';
+            },
+            font: {
+              size: 12,
+              weight: 'bold',
+            },
+          },
+        },
+        // Adjust spacing between dates (y-axis categories)
+        layout: {
+          padding: {
+            left: 10,
+            right: 10,
+            top: 10,
+            bottom: 10,
+          },
+        },
+        // Control bar spacing
+        scales: {
+          y: {
+            // Existing y-axis config
+            categoryPercentage: 0.6, // Reduce the overall space taken by each category (date)
+            barPercentage: 0.4, // Reduce the space taken by bars within each category
           },
         },
       },
@@ -339,13 +429,20 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Pay Bar Chart -->
+      <!-- Pay Bar Chart (full width) -->
       <div
         id="pay-barchart"
-        class="relative min-h-[100vh] flex-1 rounded-xl border border-sidebar-border/70 dark:border-sidebar-border md:min-h-min p-4"
+        class="relative w-full h-[800px] rounded-xl border border-sidebar-border/70 dark:border-sidebar-border p-4"
       >
         <canvas id="pay-bar-chart"></canvas>
       </div>
     </div>
   </AppLayout>
 </template>
+
+<style scoped>
+#pay-barchart canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+</style>
