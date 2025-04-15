@@ -11,8 +11,8 @@ import AppLogo from './AppLogo.vue';
 
 const mainNavItems: NavItem[] = [
     {
-        title: 'Dashboard',
-        href: '/dashboard',
+        title: 'Reports',
+        href: '/reports',
         icon: LayoutGrid,
     }, {
         title: 'Activities',

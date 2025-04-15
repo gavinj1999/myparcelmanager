@@ -1,123 +1,124 @@
+<!-- resources/js/components/Modal.vue -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 
 const props = defineProps({
-    show: {
-        type: Boolean,
-        default: false,
-    },
-    maxWidth: {
-        type: String,
-        default: '2xl',
-    },
-    closeable: {
-        type: Boolean,
-        default: true,
-    },
+  show: { type: Boolean, default: false },
+  title: { type: String, default: '' },
 });
 
 const emit = defineEmits(['close']);
-const dialog = ref();
-const showSlot = ref(props.show);
 
+const isVisible = ref(false);
+
+// Sync visibility with the show prop
 watch(
-    () => props.show,
-    () => {
-        if (props.show) {
-            document.body.style.overflow = 'hidden';
-            showSlot.value = true;
-
-            dialog.value?.showModal();
-        } else {
-            document.body.style.overflow = '';
-
-            setTimeout(() => {
-                dialog.value?.close();
-                showSlot.value = false;
-            }, 200);
-        }
-    },
+  () => props.show,
+  (newVal) => {
+    isVisible.value = newVal;
+  },
+  { immediate: true }
 );
 
+// Close the modal
 const close = () => {
-    if (props.closeable) {
-        emit('close');
-    }
+  isVisible.value = false;
+  emit('close');
 };
 
-const closeOnEscape = (e) => {
-    if (e.key === 'Escape') {
-        e.preventDefault();
-
-        if (props.show) {
-            close();
-        }
-    }
+// Close the modal when clicking the overlay (optional)
+const closeOnOverlayClick = (event: MouseEvent) => {
+  if (event.target === event.currentTarget) {
+    close();
+  }
 };
-
-onMounted(() => document.addEventListener('keydown', closeOnEscape));
-
-onUnmounted(() => {
-    document.removeEventListener('keydown', closeOnEscape);
-
-    document.body.style.overflow = '';
-});
-
-const maxWidthClass = computed(() => {
-    return {
-        sm: 'sm:max-w-sm',
-        md: 'sm:max-w-md',
-        lg: 'sm:max-w-lg',
-        xl: 'sm:max-w-xl',
-        '2xl': 'sm:max-w-2xl',
-    }[props.maxWidth];
-});
 </script>
 
 <template>
-    <dialog
-        class="z-50 m-0 min-h-full min-w-full overflow-y-auto bg-transparent backdrop:bg-transparent"
-        ref="dialog"
-    >
-        <div
-            class="fixed inset-0 z-50 overflow-y-auto px-4 py-6 sm:px-0"
-            scroll-region
-        >
-            <Transition
-                enter-active-class="ease-out duration-300"
-                enter-from-class="opacity-0"
-                enter-to-class="opacity-100"
-                leave-active-class="ease-in duration-200"
-                leave-from-class="opacity-100"
-                leave-to-class="opacity-0"
-            >
-                <div
-                    v-show="show"
-                    class="fixed inset-0 transform transition-all"
-                    @click="close"
-                >
-                    <div
-                        class="absolute inset-0 bg-gray-500 opacity-75"
-                    />
-                </div>
-            </Transition>
-
-            <Transition
-                enter-active-class="ease-out duration-300"
-                enter-from-class="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
-                enter-to-class="opacity-100 translate-y-0 sm:scale-100"
-                leave-active-class="ease-in duration-200"
-                leave-from-class="opacity-100 translate-y-0 sm:scale-100"
-                leave-to-class="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
-            >
-                <div
-                    v-show="show"
-                    class="mb-6 transform overflow-hidden rounded-lg bg-white shadow-xl transition-all sm:mx-auto sm:w-full"
-                    :class="maxWidthClass"
-                >
-                    <slot v-if="showSlot" />
-                </div>
-            </Transition>
-        </div>
-    </dialog>
+  <div v-if="isVisible" class="modal-overlay" @click="closeOnOverlayClick">
+    <div class="modal-content">
+      <div class="flex justify-between items-center mb-4">
+        <h2>{{ title }}</h2>
+        <button @click="close" class="text-gray-400 hover:text-gray-200">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <slot />
+    </div>
+  </div>
 </template>
+
+<style scoped>
+/* Style the modal overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.8); /* Dark semi-transparent overlay */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 50;
+}
+
+/* Style the modal content */
+.modal-content {
+  background-color: #1f2937; /* Tailwind's gray-800 */
+  color: #f3f4f6; /* Tailwind's gray-100 */
+  border-radius: 0.5rem; /* Tailwind's rounded-lg */
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); /* Subtle shadow for depth */
+  width: 100%;
+  max-width: 600px; /* Adjust as needed */
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 1rem; /* Tailwind's p-4 */
+}
+
+/* Style the modal title */
+.modal-content h2 {
+  color: #f3f4f6; /* Tailwind's gray-100 */
+  font-size: 1.25rem; /* Tailwind's text-xl */
+  font-weight: 600; /* Tailwind's font-semibold */
+}
+
+/* Ensure all text inside the modal is light */
+.modal-content p,
+.modal-content label,
+.modal-content input,
+.modal-content select,
+.modal-content textarea {
+  color: #f3f4f6; /* Tailwind's gray-100 */
+}
+
+/* Style inputs and selects to match the dark theme */
+.modal-content input,
+.modal-content select,
+.modal-content textarea {
+  background-color: #111827; /* Tailwind's gray-900 */
+  border-color: #374151; /* Tailwind's gray-700 */
+  color: #d1d5db; /* Tailwind's gray-300 */
+}
+.modal-content input:focus,
+.modal-content select:focus,
+.modal-content textarea:focus {
+  border-color: #3b82f6; /* Tailwind's blue-500 */
+  outline: none;
+  ring: 2px solid #3b82f6; /* Tailwind's ring-2 and ring-blue-500 */
+}
+
+/* Style nested tables in the modal (e.g., Activity Details) */
+.modal-content table {
+  background-color: #111827; /* Tailwind's gray-900 */
+  color: #f3f4f6; /* Tailwind's gray-100 */
+}
+.modal-content table thead {
+  background-color: #1f2937; /* Tailwind's gray-800 */
+}
+.modal-content table tbody tr:hover {
+  background-color: #1f2937; /* Tailwind's gray-800 */
+}
+</style>

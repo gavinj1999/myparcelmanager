@@ -61,6 +61,18 @@ public function index()
     ]);
 }
 
+public function details(Request $request)
+{
+    $date = $request->query('date');
+    $roundId = $request->query('round_id');
+    $activities = Activity::where('activity_date', $date)
+        ->whereHas('parcel_type', function ($query) use ($roundId) {
+            $query->where('round_id', $roundId);
+        })
+        ->with('parcel_type')
+        ->get();
+    return response()->json($activities);
+}
     public function store(Request $request)
     {
         $validated = $request->validate([

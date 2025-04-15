@@ -1,7 +1,10 @@
+<!-- resources/js/pages/Activities/Index.vue -->
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { router, usePage } from '@inertiajs/vue3';
 import Modal from '@/components/Modal.vue';
+import ActivitySummary from '@/components/ActivitySummary.vue';
+import RecordDailyActivities from '@/components/RecordDailyActivities.vue'; // Import the new component
 import AppLayout from '@/Layouts/AppLayout.vue';
 import moment from 'moment';
 import { type BreadcrumbItem } from '@/types';
@@ -59,47 +62,17 @@ const showFlash = ref(false);
 const localFlash = ref(null);
 const showLocalFlash = ref(false);
 
-// Default form state with dynamic today's date
-const defaultForm = ref({
-  activity_date: moment().format('YYYY-MM-DD'),
-  round_id: null,
-  quantities: [],
-});
-
 // HTML parsing state
 const htmlInput = ref('');
 const showUnknownModal = ref(false);
 const unknownParcelTypes = ref([]);
 const parsedQuantities = ref({});
 
+// Modal state for Paste Manifest HTML
+const showPasteManifestModal = ref(false);
+
 // Loading states
 const isParsing = ref(false);
-const isSubmitting = ref(false);
-
-// Initialize quantities when a round is selected
-const selectedRound = computed(() => {
-  return props.rounds.find(round => round.id === Number(defaultForm.value.round_id)) || null;
-});
-
-const updateQuantities = () => {
-  if (selectedRound.value) {
-    defaultForm.value.quantities = selectedRound.value.parcel_types.map(parcelType => ({
-      parcel_type_id: parcelType.id,
-      quantity: 0,
-    }));
-  } else {
-    defaultForm.value.quantities = [];
-  }
-};
-
-function activity_date(info) {
-  return moment(info).format('DD/MM/YYYY');
-}
-
-// Watch for changes in round_id to update quantities
-watch(() => defaultForm.value.round_id, () => {
-  updateQuantities();
-});
 
 // Watch for server-side flash messages
 watch(() => flash.value, (newFlash) => {
@@ -128,12 +101,14 @@ const parseHtml = async () => {
   isParsing.value = true;
 
   try {
-    if (!defaultForm.value.round_id) {
+    const roundId = props.rounds.find(round => round.id === Number(htmlInput.value.round_id))?.id;
+    if (!roundId) {
       localFlash.value = { error: 'Please select a round before parsing HTML' };
       return;
     }
 
-    if (!selectedRound.value || !htmlInput.value) {
+    const selectedRound = props.rounds.find(round => round.id === roundId);
+    if (!selectedRound || !htmlInput.value) {
       return;
     }
 
@@ -158,7 +133,7 @@ const parseHtml = async () => {
       const dbName = nameMapping[type] || type;
       extractedData[dbName] = manifested;
 
-      const exists = selectedRound.value.parcel_types.some(pt => pt.name === dbName);
+      const exists = selectedRound.parcel_types.some(pt => pt.name === dbName);
       if (!exists) {
         unknownTypes.push({ name: dbName, quantity: manifested, max_weight: 0, max_length: 0, rate: 0 });
       }
@@ -174,26 +149,31 @@ const parseHtml = async () => {
     }
   } finally {
     isParsing.value = false;
+    showPasteManifestModal.value = false;
   }
 };
 
 // Update quantities after parsing
 const updateQuantitiesWithParsedData = (extractedData) => {
-  defaultForm.value.quantities = defaultForm.value.quantities.map(quantity => {
-    const parcelType = selectedRound.value.parcel_types.find(pt => pt.id === quantity.parcel_type_id);
+  const roundId = props.rounds.find(round => round.id === Number(htmlInput.value.round_id))?.id;
+  const selectedRound = props.rounds.find(round => round.id === roundId);
+  if (!selectedRound) return;
+
+  const quantities = selectedRound.parcel_types.map(parcelType => {
     const quantityValue = extractedData[parcelType.name] || 0;
     return {
-      parcel_type_id: quantity.parcel_type_id,
+      parcel_type_id: parcelType.id,
       quantity: quantityValue,
     };
   });
+  emit('submitDefaultForm', { round_id: roundId, quantities });
   htmlInput.value = '';
 };
 
 // Handle unknown parcel types
 const createUnknownParcelTypes = () => {
   router.post('/parcel-types/bulk', {
-    round_id: defaultForm.value.round_id,
+    round_id: props.rounds.find(round => round.id === Number(htmlInput.value.round_id))?.id,
     parcel_types: unknownParcelTypes.value,
   }, {
     onSuccess: () => {
@@ -264,10 +244,30 @@ const openDeleteModal = (activity) => {
 const openDetailsModal = async (date: string, roundId: number) => {
   selectedDate.value = date;
   selectedRoundId.value = roundId;
+
+  // Parse the date assuming it's in YYYY-MM-DD format (as stored in summary.date)
+  const formattedDate = moment(date, 'YYYY-MM-DD').format('YYYY-MM-DD');
+  if (!moment(formattedDate, 'YYYY-MM-DD').isValid()) {
+    console.error('Invalid date format:', date);
+    activitiesForDateAndRound.value = [];
+    showDetailsModal.value = true;
+    return;
+  }
+
+  console.log('Fetching activities for date:', formattedDate, 'and roundId:', roundId);
+
   try {
-    const response = await fetch(`/activities/details?date=${date}&round_id=${roundId}`);
+    const response = await fetch(`/activities/details?date=${formattedDate}&round_id=${roundId}`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! Status: ${response.status}`);
+    }
     const data = await response.json();
+    console.log('API response:', data);
+
     activitiesForDateAndRound.value = Array.isArray(data) ? data : [];
+    if (activitiesForDateAndRound.value.length === 0) {
+      console.log('No activities found for this date and round.');
+    }
     showDetailsModal.value = true;
   } catch (error) {
     console.error('Error fetching activities for modal:', error);
@@ -303,126 +303,11 @@ const deleteActivity = () => {
   });
 };
 
-// Submit the default form
-const submitDefaultForm = async () => {
-  if (isSubmitting.value) return;
-  isSubmitting.value = true;
-
-  try {
-    const payload = {
-      activity_date: defaultForm.value.activity_date,
-      round_id: defaultForm.value.round_id,
-      quantities: defaultForm.value.quantities,
-    };
-    router.post('/activities/bulk', payload, {
-      onSuccess: () => {
-        updateQuantities();
-        router.reload({ preserveState: true, preserveScroll: true });
-      },
-    });
-  } finally {
-    isSubmitting.value = false;
-  }
-};
-
-// Calculate total value for an activity
-const calculateTotalValue = (activity) => {
-  if (!activity.parcel_type || !activity.parcel_type.rate) return 0;
-  return activity.quantity * activity.parcel_type.rate;
-};
-
 // Period filter for Activity Summary (checkbox dropdown)
 const safeDatePeriods = computed(() => {
   const periods = props.datePeriods?.length ? props.datePeriods : props.date_periods;
   if (!periods || !Array.isArray(periods)) return [];
   return periods.filter(period => period && typeof period === 'object' && 'id' in period);
-});
-
-// Find the default period containing today's date (2025-04-13)
-const today = moment('2025-04-13');
-const defaultPeriod = computed(() => {
-  if (!safeDatePeriods.value.length) return null;
-  return safeDatePeriods.value.find(period =>
-    today.isBetween(moment(period.start_date), moment(period.end_date), undefined, '[]')
-  ) || null;
-});
-
-const selectedPeriodIds = ref<string[]>(defaultPeriod.value ? [String(defaultPeriod.value.id)] : []);
-
-// Checkbox dropdown state
-const showPeriodDropdown = ref(false);
-
-// Handle "All Periods" checkbox
-const handleAllPeriodsChange = () => {
-  if (selectedPeriodIds.value.includes('all')) {
-    selectedPeriodIds.value = ['all'];
-  } else if (safeDatePeriods.value.length && selectedPeriodIds.value.length === safeDatePeriods.value.length) {
-    selectedPeriodIds.value = ['all'];
-  } else {
-    selectedPeriodIds.value = [];
-  }
-};
-
-// Handle individual period checkbox
-const handlePeriodChange = () => {
-  if (selectedPeriodIds.value.includes('all')) {
-    selectedPeriodIds.value = selectedPeriodIds.value.filter(id => id !== 'all');
-  }
-  if (safeDatePeriods.value.length && selectedPeriodIds.value.length === safeDatePeriods.value.length) {
-    selectedPeriodIds.value = ['all'];
-  }
-};
-
-// Filter activities by selected periods and group by date and round
-const filteredActivitySummary = computed(() => {
-  const includeAll = selectedPeriodIds.value.length === 0 || selectedPeriodIds.value.includes('all');
-  const periods = includeAll
-    ? safeDatePeriods.value
-    : safeDatePeriods.value.filter(period => selectedPeriodIds.value.includes(String(period.id)));
-
-  // Group activities by date and round
-  const summaryByDateAndRound: { [key: string]: { date: string, roundId: number, roundName: string, totalQuantity: number, totalValue: number } } = {};
-
-  const activities = props.activities?.data || [];
-  activities.forEach(activity => {
-    const date = moment(activity.activity_date);
-    const dateStr = activity.activity_date;
-    const roundId = activity.parcel_type?.round_id ?? 0;
-    const round = props.rounds.find(r => r.id === roundId);
-    const roundName = round ? round.name : `Unknown Round (ID: ${roundId})`;
-
-    // Find the period this activity belongs to
-    const activityPeriod = safeDatePeriods.value.find(period =>
-      date.isBetween(moment(period.start_date), moment(period.end_date), undefined, '[]')
-    );
-
-    // Skip if the activity's period is not in the selected periods
-    if (!includeAll && (!activityPeriod || !periods.some(p => p.id === activityPeriod.id))) {
-      return;
-    }
-
-    const key = `${dateStr}-${roundId}`;
-    if (!summaryByDateAndRound[key]) {
-      summaryByDateAndRound[key] = {
-        date: dateStr,
-        roundId: roundId,
-        roundName,
-        totalQuantity: 0,
-        totalValue: 0,
-      };
-    }
-
-    summaryByDateAndRound[key].totalQuantity += activity.quantity;
-    summaryByDateAndRound[key].totalValue += calculateTotalValue(activity);
-  });
-
-  // Convert to array and sort by date (descending)
-  return Object.values(summaryByDateAndRound)
-    .map(item => ({
-      ...item,
-      totalValue: `£${item.totalValue.toFixed(2)}`,
-    }))
-    .sort((a, b) => moment(b.date).diff(moment(a.date)));
 });
 
 // Compute monetary value per date period
@@ -470,11 +355,6 @@ const sortBy = (key) => {
     sortOrder.value = 1;
   }
 };
-
-// Pagination handler
-const changePage = (page) => {
-  router.get('/activities', { page }, { preserveState: true, preserveScroll: true });
-};
 </script>
 
 <template>
@@ -508,98 +388,13 @@ const changePage = (page) => {
           <button @click="showLocalFlash = false; localFlash = null" class="ml-auto text-white hover:text-gray-200">×</button>
         </div>
 
-        <!-- Side-by-Side Container -->
+        <!-- Side-by-Side Container (Now Full Width for Record Daily Activities) -->
         <div class="flex flex-wrap -mx-4 mb-8">
-          <!-- Paste Manifest HTML -->
-          <div class="w-full md:w-1/2 px-4 mb-6 md:mb-0">
-            <div class="p-6 bg-gray-800 rounded-xl shadow-lg">
-              <h2 class="text-xl font-semibold text-gray-100 mb-4">Paste Manifest HTML</h2>
-              <textarea
-                v-model="htmlInput"
-                placeholder="Paste the HTML table here..."
-                class="w-full h-32 border rounded p-2 bg-gray-900 text-gray-200 placeholder-gray-400 mb-4 focus:ring-2 focus:ring-blue-500"
-              ></textarea>
-              <div class="flex justify-end relative group">
-                <button
-                  @click="parseHtml"
-                  class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
-                  :disabled="!htmlInput || !defaultForm.round_id || isParsing"
-                >
-                  {{ isParsing ? 'Parsing...' : 'Parse HTML' }}
-                </button>
-                <span
-                  v-if="!htmlInput || !defaultForm.round_id"
-                  class="absolute bottom-full mb-2 hidden group-hover:block px-2 py-1 text-sm text-gray-100 bg-gray-700 rounded"
-                >
-                  Select a round and enter HTML to enable
-                </span>
-              </div>
-            </div>
-          </div>
-
           <!-- Record Daily Activities -->
-          <div class="w-full md:w-1/2 px-4">
-            <div class="p-6 bg-gray-800 rounded-xl shadow-lg">
-              <h2 class="text-xl font-semibold text-gray-100 mb-4">Record Daily Activities</h2>
-              <div v-if="!props.rounds.length" class="mb-4 p-4 bg-gray-800 text-gray-100 rounded-lg">
-                No rounds available. Please create a round first.
-              </div>
-              <form v-else @submit.prevent="submitDefaultForm">
-                <div class="mb-4">
-                  <label class="block text-sm font-medium text-gray-100 mb-1">Date</label>
-                  <input
-                    v-model="defaultForm.activity_date"
-                    type="date"
-                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-                <div class="mb-4">
-                  <label class="block text-sm font-medium text-gray-100 mb-1">Round</label>
-                  <select
-                    v-model="defaultForm.round_id"
-                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                    required
-                  >
-                    <option value="" disabled>Select a round</option>
-                    <option v-for="round in rounds" :key="round.id" :value="round.id">
-                      {{ round.name }}
-                    </option>
-                  </select>
-                </div>
-                <div v-if="selectedRound" class="mb-4">
-                  <h3 class="text-sm font-medium text-gray-100 mb-2">Parcel Types (Round {{ selectedRound.name }})</h3>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div
-                      v-for="(quantity, index) in defaultForm.quantities"
-                      :key="quantity.parcel_type_id"
-                      class="flex items-center"
-                    >
-                      <label class="w-2/3 text-sm text-gray-100 truncate" :title="selectedRound.parcel_types[index].name">
-                        {{ selectedRound.parcel_types[index].name }}
-                      </label>
-                      <input
-                        v-model.number="defaultForm.quantities[index].quantity"
-                        type="number"
-                        min="0"
-                        class="w-1/3 border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
-                        placeholder="0"
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div class="flex justify-end">
-                  <button
-                    type="submit"
-                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
-                    :disabled="!defaultForm.round_id || isSubmitting"
-                  >
-                    {{ isSubmitting ? 'Saving...' : 'Record Activities' }}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
+          <RecordDailyActivities
+            :rounds="props.rounds"
+            @open-paste-manifest-modal="showPasteManifestModal = true"
+          />
         </div>
 
         <!-- Monetary Value per Date Period Table -->
@@ -624,97 +419,47 @@ const changePage = (page) => {
           </table>
         </div>
 
-        <!-- Activity Summary Table with Checkbox Period Filter -->
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-lg font-semibold text-gray-100">Activity Summary</h2>
-          <div class="flex items-center space-x-3">
-            <div class="relative">
-              <button
-                @click="showPeriodDropdown = !showPeriodDropdown"
-                class="border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 w-64 text-left"
-                :disabled="!safeDatePeriods.length"
-              >
-                {{ selectedPeriodIds.length === 0 || selectedPeriodIds.includes('all') ? 'All Periods' : `${selectedPeriodIds.length} Period(s) Selected` }}
-                <span class="absolute right-2 top-1/2 transform -translate-y-1/2">▼</span>
-              </button>
-              <div
-                v-if="showPeriodDropdown && safeDatePeriods.length"
-                class="absolute z-10 mt-1 w-64 bg-gray-800 border rounded shadow-lg max-h-60 overflow-y-auto"
-              >
-                <label class="block p-2 hover:bg-gray-700">
-                  <input
-                    type="checkbox"
-                    value="all"
-                    v-model="selectedPeriodIds"
-                    @change="handleAllPeriodsChange"
-                    class="mr-2"
-                  />
-                  All Periods
-                </label>
-                <label v-for="period in safeDatePeriods" :key="period.id" class="block p-2 hover:bg-gray-700">
-                  <input
-                    type="checkbox"
-                    :value="String(period.id)"
-                    v-model="selectedPeriodIds"
-                    @change="handlePeriodChange"
-                    class="mr-2"
-                  />
-                  {{ period.name || 'Unknown Period' }}
-                </label>
-              </div>
-              <div v-if="showPeriodDropdown && !safeDatePeriods.length" class="absolute z-10 mt-1 w-64 bg-gray-800 border rounded shadow-lg p-2 text-gray-400">
-                No periods available
-              </div>
-            </div>
-            <button @click="openAddModal" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200">
-              Add Activity
-            </button>
-          </div>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full border bg-gray-900 rounded-lg">
-            <thead>
-              <tr class="bg-gray-800 text-gray-100">
-                <th class="p-3 text-left">Date</th>
-                <th class="p-3 text-left">Round</th>
-                <th class="p-3 text-left">Total Quantity</th>
-                <th class="p-3 text-left">Total Value (£)</th>
-                <th class="p-3 text-left">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="summary in filteredActivitySummary" :key="`${summary.date}-${summary.roundId}`" class="border-t hover:bg-gray-800">
-                <td class="p-3 cursor-pointer text-blue-400 hover:underline" @click="openDetailsModal(summary.date, summary.roundId)">
-                  {{ activity_date(summary.date) }}
-                </td>
-                <td class="p-3">{{ summary.roundName }}</td>
-                <td class="p-3">{{ summary.totalQuantity }}</td>
-                <td class="p-3">{{ summary.totalValue }}</td>
-                <td class="p-3">
-                  <!-- Placeholder for future actions -->
-                </td>
-              </tr>
-              <tr v-if="!filteredActivitySummary.length" class="border-t">
-                <td colspan="5" class="p-3 text-gray-400 text-center">No activities for selected periods</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <!-- Activity Summary Component -->
+        <ActivitySummary
+          :activities="props.activities"
+          :rounds="props.rounds"
+          :safe-date-periods="safeDatePeriods"
+          :parcel-types="props.parcelTypes"
+          @open-add-modal="openAddModal"
+          @open-details-modal="openDetailsModal"
+        />
 
-        <!-- Pagination Controls -->
-        <div class="mt-4 flex justify-center">
-          <nav class="flex space-x-2">
-            <button
-              v-for="link in props.activities?.links || []"
-              :key="link.label"
-              @click="changePage(link.label)"
-              class="px-3 py-1 rounded"
-              :class="link.active ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200'"
-              :disabled="!link.url"
-              v-html="link.label"
-            ></button>
-          </nav>
-        </div>
+        <!-- Modal for Paste Manifest HTML -->
+        <Modal :show="showPasteManifestModal" title="Paste Manifest HTML" @close="showPasteManifestModal = false">
+          <div class="p-6">
+            <textarea
+              v-model="htmlInput"
+              placeholder="Paste the HTML table here..."
+              class="w-full h-32 border rounded p-2 bg-gray-900 text-gray-200 placeholder-gray-400 mb-4 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
+            ></textarea>
+            <div class="flex justify-end space-x-3 relative group">
+              <button
+                @click="showPasteManifestModal = false"
+                class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded transition duration-200"
+              >
+                Cancel
+              </button>
+              <button
+                @click="parseHtml"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition duration-200 disabled:bg-gray-500 disabled:cursor-not-allowed"
+                :disabled="!htmlInput || !props.rounds.length || isParsing"
+              >
+                {{ isParsing ? 'Parsing...' : 'Parse HTML' }}
+              </button>
+              <span
+                v-if="!htmlInput || !props.rounds.length"
+                class="absolute bottom-full mb-2 hidden group-hover:block px-2 py-1 text-sm text-gray-100 bg-gray-700 rounded"
+              >
+                Select a round and enter HTML to enable
+              </span>
+            </div>
+          </div>
+        </Modal>
 
         <!-- Modal for Unknown Parcel Types -->
         <Modal :show="showUnknownModal" title="Unknown Parcel Types Detected" @close="showUnknownModal = false">
@@ -729,7 +474,7 @@ const changePage = (page) => {
                     v-model.number="unknownParcelTypes[index].max_weight"
                     type="number"
                     step="0.01"
-                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                     required
                   />
                 </div>
@@ -739,7 +484,7 @@ const changePage = (page) => {
                     v-model.number="unknownParcelTypes[index].max_length"
                     type="number"
                     step="0.01"
-                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                     required
                   />
                 </div>
@@ -749,7 +494,7 @@ const changePage = (page) => {
                     v-model.number="unknownParcelTypes[index].rate"
                     type="number"
                     step="0.01"
-                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                    class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                     required
                   />
                 </div>
@@ -786,7 +531,7 @@ const changePage = (page) => {
                 <label class="block text-sm font-medium text-gray-100 mb-1">Parcel Type</label>
                 <select
                   v-model="form.parcel_type_id"
-                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                   required
                 >
                   <option value="" disabled>Select a parcel type</option>
@@ -800,7 +545,7 @@ const changePage = (page) => {
                 <input
                   v-model="form.activity_date"
                   type="date"
-                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                   required
                 />
               </div>
@@ -810,7 +555,7 @@ const changePage = (page) => {
                   v-model="form.quantity"
                   type="number"
                   min="0"
-                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                   required
                 />
               </div>
@@ -840,7 +585,7 @@ const changePage = (page) => {
                 <label class="block text-sm font-medium text-gray-100 mb-1">Parcel Type</label>
                 <select
                   v-model="form.parcel_type_id"
-                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                   required
                 >
                   <option value="" disabled>Select a parcel type</option>
@@ -854,7 +599,7 @@ const changePage = (page) => {
                 <input
                   v-model="form.activity_date"
                   type="date"
-                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                   required
                 />
               </div>
@@ -864,7 +609,7 @@ const changePage = (page) => {
                   v-model="form.quantity"
                   type="number"
                   min="0"
-                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500"
+                  class="w-full border rounded p-2 bg-gray-900 text-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 shadow-sm"
                   required
                 />
               </div>
@@ -908,7 +653,7 @@ const changePage = (page) => {
         </Modal>
 
         <!-- Activity Details Modal -->
-        <Modal :show="showDetailsModal" :title="`Activities for ${selectedDate ? activity_date(selectedDate.value) : ''}`" @close="showDetailsModal = false">
+        <Modal :show="showDetailsModal" :title="`Activities for ${selectedDate ? moment(selectedDate.value).format('DD/MM/YYYY') : ''}`" @close="showDetailsModal = false">
           <div class="p-6">
             <div v-if="activitiesForDateAndRound.length">
               <div class="overflow-x-auto">
@@ -925,7 +670,7 @@ const changePage = (page) => {
                     <tr v-for="activity in activitiesForDateAndRound" :key="activity.id" class="border-t hover:bg-gray-800">
                       <td class="p-3">{{ activity.parcel_type?.name || 'Unknown' }}</td>
                       <td class="p-3">{{ activity.quantity }}</td>
-                      <td class="p-3">{{ `£${calculateTotalValue(activity).toFixed(2)}` }}</td>
+                      <td class="p-3">{{ `£${(activity.quantity * (activity.parcel_type?.rate || 0)).toFixed(2)}` }}</td>
                       <td class="p-3 flex space-x-2">
                         <button
                           @click="openEditModal(activity)"

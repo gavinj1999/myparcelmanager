@@ -26,6 +26,7 @@ Route::middleware('auth')->group(function () {
     Route::resource('activities', ActivityController::class)->except(['create', 'edit', 'show']);
     Route::post('activities/bulk', [ActivityController::class, 'storeBulk'])->name('activities.bulk');
     Route::get('reports', [ReportController::class, 'index'])->name('reports.index');
+    Route::get('/activities/details', [ActivityController::class, 'details'])->name('activities.details');
 });
 
 require __DIR__.'/settings.php';
