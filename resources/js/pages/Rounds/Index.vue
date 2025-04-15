@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import AppLayout from '@/layouts/AppLayout.vue';
+import AppLayout from '@/Layouts/AppLayout.vue';
 import { ref } from 'vue';
 import { router, Head } from '@inertiajs/vue3';
 import Modal from '@/components/Modal.vue';

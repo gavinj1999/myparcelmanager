@@ -2,7 +2,7 @@
 import { ref } from 'vue';
 import { router } from '@inertiajs/vue3';
 import Modal from '@/components/Modal.vue';
-import AppLayout from '@/layouts/AppLayout.vue';
+import AppLayout from '@/Layouts/AppLayout.vue';
 import { type BreadcrumbItem } from '@/types';
 
 const breadcrumbs: BreadcrumbItem[] = [
