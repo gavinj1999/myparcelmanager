@@ -9,4 +9,7 @@ class ActivityImage extends Model
 {
     /** @use HasFactory<\Database\Factories\ActivityImageFactory> */
     use HasFactory;
+
+    protected $fillable = ['activity_date', 'image_path'];
+
 }

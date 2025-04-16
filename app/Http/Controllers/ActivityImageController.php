@@ -2,65 +2,39 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Controller;
 use App\Models\ActivityImage;
-use App\Http\Requests\StoreActivityImageRequest;
-use App\Http\Requests\UpdateActivityImageRequest;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Inertia\Inertia;
 
 class ActivityImageController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
-    public function index()
+    public function index(Request $request)
     {
-        //
-    }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        //
-    }
 
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(StoreActivityImageRequest $request)
-    {
-        //
+        return Inertia::render('ActivityImages/Index', [
+            'activityImages' => $activityImages->latest()->paginate(10),
+        ]);
     }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(ActivityImage $activityImage)
+    public function store(Request $request)
     {
-        //
-    }
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'activity_date' => 'required|date',
+        ]);
 
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(ActivityImage $activityImage)
-    {
-        //
-    }
+        $path = $request->file('image')->store('activity_images', 'public');
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(UpdateActivityImageRequest $request, ActivityImage $activityImage)
-    {
-        //
-    }
+        $activityImage = ActivityImage::create([
+            'activity_date' => $request->activity_date,
+            'image_path' => $path,
+        ]);
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(ActivityImage $activityImage)
-    {
-        //
+        return response()->json([
+            'message' => 'Image uploaded successfully',
+            'data' => $activityImage,
+        ], 201);
     }
 }

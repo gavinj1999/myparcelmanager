@@ -10,7 +10,7 @@ class CreateActivityImagesTable extends Migration
     {
         Schema::create('activity_images', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('activity_id')->constrained()->onDelete('cascade');
+            $table->date('activity_date');
             $table->string('image_path');
             $table->timestamps();
         });

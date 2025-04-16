@@ -1,5 +1,6 @@
 <?php
 
+
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\DatePeriodController;
 use App\Http\Controllers\RoundController;
@@ -8,6 +9,7 @@ use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\AutomationController;
 use App\Http\Controllers\Api\ImageUploadController;
+use App\Http\Controllers\ActivityImageController;
 use Inertia\Inertia;
 
 Route::get('/', function () {
@@ -27,6 +29,7 @@ Route::middleware('auth')->group(function () {
     Route::post('activities/bulk', [ActivityController::class, 'storeBulk'])->name('activities.bulk');
     Route::get('reports', [ReportController::class, 'index'])->name('reports.index');
     Route::get('/activities/details', [ActivityController::class, 'details'])->name('activities.details');
+    Route::get('end-of-day-image', [ActivityImageController::class, 'index'])->name('endofdayimages');
 });
 
 require __DIR__.'/settings.php';

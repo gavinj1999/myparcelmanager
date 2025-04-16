@@ -30,6 +30,10 @@ const mainNavItems: NavItem[] = [
         title: 'Date Periods',
         href: '/date-periods',
         icon: LayoutGrid,
+    }, {
+        title: 'End of Day Image',
+        href: '/end-of-day-image',
+        icon: LayoutGrid,
     },
 ];
 
